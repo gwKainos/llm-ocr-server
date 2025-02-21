@@ -14,14 +14,31 @@ $ npm install tesseract.js multer sharp @nestjs/platform-express
 $ npm install --save-dev @types/multer
 ```
 
-### UPLORD 기본 구조 세팅
+### OCR 기본 구조 세팅
 ```shell
 $ nest g res ocr
 ```
-
 
 ## 이슈 해결
 ### Corresponding file is not included in tsconfig.json
 ```shell
 $ npm install --save-dev @types/node
+```
+
+### npm audit fix --force가 실행되지 않는 이유 (package-lock.json 있는지 확인)
+```shell
+$ rm -rf node_modules package-lock.json
+$ npm install
+$ npm audit fix --force
+
+# 파일 생성이 안될 경우
+$ cat ~/.npmrc
+package-lock=false
+$ npm config set package-lock true
+
+# 중복 버전 제거
+npm dedupe
+
+# 보안 체크
+npm audit
 ```
