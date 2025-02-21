@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as pdfParse from 'pdf-parse';
 import puppeteer from 'puppeteer';
-import Tesseract from 'tesseract.js';
+import Tesseract, { PSM } from 'tesseract.js';
 import path from 'path';
 
 export const pdfUtil = {
@@ -27,26 +27,20 @@ export const pdfUtil = {
   } {
     const cleanedText = pdfUtil.cleanText(text);
 
-    const landlordMatch = cleanedText.match(/임대인.*?성\s*명[:\s]*([가-힣A-Za-z]+)/);
-    const landlordPhoneMatch = cleanedText.match(/임대인.*?연락처[:\s]*(\d{3}-\d{3,4}-\d{4})/);
-    const landlordAddressMatch = cleanedText.match(/임대인.*?주\s*소[:\s]*([\w가-힣\s]+)/);
-
-    const tenantMatch = cleanedText.match(/임차인.*?성\s*명[:\s]*([가-힣A-Za-z]+)/);
-    const tenantPhoneMatch = cleanedText.match(/임차인.*?연락처[:\s]*(\d{3}-\d{3,4}-\d{4})/);
-    const tenantAddressMatch = cleanedText.match(/임차인.*?주\s*소[:\s]*([\w가-힣\s]+)/);
-
-    const contractPeriodMatch = cleanedText.match(/임대차계약\s*기간[:\s]*([\w\s]+)/);
-    const renewalRejectionMatch = cleanedText.match(/계약갱신거절\s*사유[:\s]*([\w\s]+)/);
+    const extract = (regex: RegExp) => {
+      const match = cleanedText.match(regex);
+      return match && match[1] ? match[1].trim() : '정보 없음';
+    };
 
     return {
-      landlord: landlordMatch ? landlordMatch[1].trim() : '정보 없음',
-      landlordPhone: landlordPhoneMatch ? landlordPhoneMatch[1].trim() : '정보 없음',
-      landlordAddress: landlordAddressMatch ? landlordAddressMatch[1].trim() : '정보 없음',
-      tenant: tenantMatch ? tenantMatch[1].trim() : '정보 없음',
-      tenantPhone: tenantPhoneMatch ? tenantPhoneMatch[1].trim() : '정보 없음',
-      tenantAddress: tenantAddressMatch ? tenantAddressMatch[1].trim() : '정보 없음',
-      contractPeriod: contractPeriodMatch ? contractPeriodMatch[1].trim() : '정보 없음',
-      renewalRejectionReason: renewalRejectionMatch ? renewalRejectionMatch[1].trim() : '정보 없음',
+      landlord: extract(/임대인.*?성\s*명[:\s]*([가-힣A-Za-z]+)/),
+      landlordPhone: extract(/임대인.*?연락처[:\s]*(\d{3}-\d{3,4}-\d{4})/),
+      landlordAddress: extract(/임대인.*?주\s*소[:\s]*([\w가-힣\s]+)/),
+      tenant: extract(/임차인.*?성\s*명[:\s]*([가-힣A-Za-z]+)/),
+      tenantPhone: extract(/임차인.*?연락처[:\s]*(\d{3}-\d{3,4}-\d{4})/),
+      tenantAddress: extract(/임차인.*?주\s*소[:\s]*([\w가-힣\s]+)/),
+      contractPeriod: extract(/임대차계약\s*기간[:\s]*([\w\s]+)/),
+      renewalRejectionReason: extract(/계약갱신거절\s*사유[:\s]*([\w\s]+)/),
     };
   },
 
@@ -54,15 +48,23 @@ export const pdfUtil = {
    * OCR을 사용하여 이미지 기반 PDF에서 텍스트를 추출하는 함수 (puppeteer 사용)
    */
   async extractTextUsingOCR(pdfPath: string): Promise<string> {
+    let browser;
+    let worker;
+
     try {
       const outputPath = path.join(__dirname, '../output');
       if (!fs.existsSync(outputPath)) {
         fs.mkdirSync(outputPath, {recursive: true});
       }
 
-      const browser = await puppeteer.launch();
+      // ✅ Puppeteer 브라우저 설정 수정
+      browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
+
       const page = await browser.newPage();
-      const fileUrl = `file://${path.resolve(pdfPath)}`;
+      const fileUrl = `file://${encodeURI(path.resolve(pdfPath))}`;
 
       await page.goto(fileUrl, {waitUntil: 'networkidle2'});
 
@@ -71,12 +73,20 @@ export const pdfUtil = {
 
       await browser.close();
 
-      const {data: {text}} = await Tesseract.recognize(imagePath, 'kor');
+      // ✅ Tesseract Worker 생성 및 초기화
+      worker = await Tesseract.createWorker();
+      await worker.reinitialize('kor');
+      await worker.setParameters({tessedit_pageseg_mode: PSM.SINGLE_BLOCK});
 
+      const {data: {text}} = await worker.recognize(imagePath);
       return pdfUtil.cleanText(text);
+
     } catch (error) {
       console.error(`Error extracting text using OCR: ${error.message}`);
       throw new Error('Failed to extract text using OCR');
+    } finally {
+      if (browser) await browser.close();
+      if (worker) await worker.terminate();
     }
   },
 
@@ -87,7 +97,7 @@ export const pdfUtil = {
     try {
       const pdfBuffer = await fs.promises.readFile(filePath);
       const pdfData = await pdfParse(pdfBuffer);
-      return pdfUtil.cleanText(pdfData.text);
+      return pdfUtil.cleanText(pdfData.text || '');
     } catch (error) {
       console.error(`Error parsing PDF: ${error.message}`);
       throw new Error('Failed to parse the PDF file');
