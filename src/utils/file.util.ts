@@ -17,7 +17,10 @@ export const fileUtil = {
    * @returns 생성된 파일명
    */
   generateFilename(extension: string): string {
-    const timestamp = new Date().toISOString().replace(/[-T:.Z]/g, '').slice(0, 14);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[-T:.Z]/g, '')
+      .slice(0, 14);
     const randomNumber = Math.floor(1000 + Math.random() * 9000);
     return `${timestamp}_${randomNumber}.${extension}`;
   },

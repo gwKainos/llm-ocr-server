@@ -1,15 +1,16 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { fileUtil } from "../utils/file.util";
+import { fileUtil } from '../utils/file.util';
 
 @Injectable()
 export class OcrService {
   private readonly logger = new Logger(OcrService.name);
   private uploadPath: string = fileUtil.getUploadPath();
 
-  constructor(
-  ) {}
+  constructor() {}
 
-  async processFile(file: Express.Multer.File): Promise<{ text: string; parsedData: any }> {
+  async processFile(
+    file: Express.Multer.File,
+  ): Promise<{ text: string; parsedData: any }> {
     if (!file || !file.path) {
       this.logger.error(`Invalid file data: ${JSON.stringify(file)}`);
       throw new BadRequestException('Invalid file data');
@@ -18,7 +19,7 @@ export class OcrService {
     const originalPath = file.path;
 
     try {
-      const normalizedText = "";
+      const normalizedText = '';
       const mappedData = [];
       return { text: normalizedText, parsedData: mappedData };
     } catch (error) {

@@ -1,15 +1,14 @@
 import {
   BadRequestException,
-  Controller, Get,
+  Controller,
   Logger,
   Post,
   UploadedFile,
   UseInterceptors,
-  NestInterceptor
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Express } from 'express';
-import { OcrService } from "./ocr.service";
+import { OcrService } from './ocr.service';
 
 @Controller('ocr')
 export class OcrController {
