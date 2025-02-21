@@ -18,7 +18,7 @@ export class OcrController {
 
   @Post()
   @UseInterceptors(FileInterceptor('file'))
-  uploadFile(@UploadedFile() file: Express.Multer.File) {
+  async uploadFile(@UploadedFile() file: Express.Multer.File) {
     this.logger.debug(`Received file: ${JSON.stringify(file)}`);
 
     if (!file) {
@@ -30,6 +30,23 @@ export class OcrController {
     }
 
     const filePath = await this.ocrService.processFile(file);
+    return { message: 'File Ocred successfully', path: filePath };
+  }
+
+  @Post('/pdf')
+  @UseInterceptors(FileInterceptor('file'))
+  async processPDF(@UploadedFile() file: Express.Multer.File) {
+    this.logger.debug(`Received file: ${JSON.stringify(file)}`);
+
+    if (!file) {
+      throw new BadRequestException('No file Ocred');
+    }
+
+    if (!file.filename) {
+      throw new BadRequestException('Invalid file data: Missing filename');
+    }
+
+    const filePath = await this.ocrService.processPDF(file);
     return { message: 'File Ocred successfully', path: filePath };
   }
 }

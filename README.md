@@ -19,6 +19,13 @@ $ npm install --save-dev @types/multer
 $ nest g res ocr
 ```
 
+### PDF 관련 세팅
+```shell
+$ npm install pdf-parse @types/pdf-parse
+$ npm install puppeteer
+```
+
+
 ## 이슈 해결
 ### Corresponding file is not included in tsconfig.json
 ```shell
