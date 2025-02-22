@@ -1,191 +1,177 @@
-/* pdf.util.ts */
 import * as fs from 'fs';
-import * as pdfParse from 'pdf-parse';
+import path from 'path';
 import puppeteer from 'puppeteer';
 import Tesseract, { PSM } from 'tesseract.js';
-import path from 'path';
+import * as pdfjsLib from 'pdfjs-dist'; // pdfjs-dist v4 사용
+
+// 사각형 영역 인터페이스 – 원하는 텍스트 영역을 지정합니다.
+export interface Rect {
+  page: number;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+}
+
+// 지정된 사각형 영역 내의 텍스트를 추출하는 함수
+export function getTextInRect(items: any[], rect: Rect): string {
+  const filtered = items.filter(
+    (item) =>
+      item.page === rect.page &&
+      item.x >= rect.xMin &&
+      item.x <= rect.xMax &&
+      item.y >= rect.yMin &&
+      item.y <= rect.yMax,
+  );
+  filtered.sort((a, b) => a.x - b.x);
+  return filtered
+    .map((item) => item.text)
+    .join(' ')
+    .trim();
+}
 
 export const pdfUtil = {
-  /**
-   * 공백 및 개행 문자를 정리하는 함수
-   */
+  // 텍스트 클린업: 연속 공백 및 개행문자 정리
   cleanText(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
   },
 
   /**
-   * PDF 또는 OCR에서 추출한 텍스트에서 임대인 및 임차인 관련 정보를 계층 구조로 추출합니다.
-   *
-   * 추출 필드:
-   * - 임대인.주소, 임대인.주민등록번호, 임대인.전화, 임대인.성명
-   * - 임대인.대리인.주소, 임대인.대리인.주민등록번호, 임대인.대리인.성명
-   * - 임차인.주소, 임차인.주민등록번호, 임차인.전화, 임차인.성명
-   * - 임차인.대리인.주소, 임차인.대리인.주민등록번호, 임차인.대리인.성명
-   * - 계약기간, 계약갱신거절 사유
-   *
-   * OCR나 PDF 파싱 결과에서 불필요한 공백이나 줄바꿈으로 인해 마커가 분리되어 인식될 수 있으므로,
-   * 각 마커에 대해 글자 사이의 임의의 공백을 허용하는 유연한 정규표현식을 사용합니다.
+   * PDF.js를 사용하여 PDF 파일에서 모든 텍스트 아이템과 그 좌표를 추출합니다.
    */
-  extractDataFromText(text: string): {
-    landlord: {
-      address: string;
-      registrationNumber: string;
-      phone: string;
-      name: string;
-      agent: {
-        address: string;
-        registrationNumber: string;
-        name: string;
-      };
-    };
-    tenant: {
-      address: string;
-      registrationNumber: string;
-      phone: string;
-      name: string;
-      agent: {
-        address: string;
-        registrationNumber: string;
-        name: string;
-      };
-    };
-    contractPeriod: string;
-    renewalRejectionReason: string;
-  } {
-    const cleanedText = pdfUtil.cleanText(text);
-
-    // 마커 배열: PDF 내 실제 마커와 일치해야 합니다.
-    // OCR 결과에 따라 마커 사이에 불필요한 공백이 끼어들 수 있으므로,
-    // 추후 필요에 따라 마커 값을 수정하거나 확장할 수 있습니다.
-    const markers = [
-      { key: 'landlord.address', marker: '임대인.주소' },
-      { key: 'landlord.registrationNumber', marker: '임대인.주민등록번호' },
-      { key: 'landlord.phone', marker: '임대인.전화' },
-      { key: 'landlord.name', marker: '임대인.성명' },
-      { key: 'landlord.agent.address', marker: '임대인.대리인.주소' },
-      {
-        key: 'landlord.agent.registrationNumber',
-        marker: '임대인.대리인.주민등록번호',
-      },
-      { key: 'landlord.agent.name', marker: '임대인.대리인.성명' },
-      { key: 'tenant.address', marker: '임차인.주소' },
-      { key: 'tenant.registrationNumber', marker: '임차인.주민등록번호' },
-      { key: 'tenant.phone', marker: '임차인.전화' },
-      { key: 'tenant.name', marker: '임차인.성명' },
-      { key: 'tenant.agent.address', marker: '임차인.대리인.주소' },
-      {
-        key: 'tenant.agent.registrationNumber',
-        marker: '임차인.대리인.주민등록번호',
-      },
-      { key: 'tenant.agent.name', marker: '임차인.대리인.성명' },
-      { key: 'contractPeriod', marker: '임대차계약 기간' },
-      { key: 'renewalRejectionReason', marker: '계약갱신거절 사유' },
-    ];
-
-    // 결과 객체 기본 구조
-    const result = {
-      landlord: {
-        address: '정보 없음',
-        registrationNumber: '정보 없음',
-        phone: '정보 없음',
-        name: '정보 없음',
-        agent: {
-          address: '정보 없음',
-          registrationNumber: '정보 없음',
-          name: '정보 없음',
-        },
-      },
-      tenant: {
-        address: '정보 없음',
-        registrationNumber: '정보 없음',
-        phone: '정보 없음',
-        name: '정보 없음',
-        agent: {
-          address: '정보 없음',
-          registrationNumber: '정보 없음',
-          name: '정보 없음',
-        },
-      },
-      contractPeriod: '정보 없음',
-      renewalRejectionReason: '정보 없음',
-    };
-
-    // 도우미 함수: 'a.b.c' 형태의 키를 계층 객체에 할당
-    function assignValue(obj: any, key: string, value: string) {
-      const keys = key.split('.');
-      let current = obj;
-      for (let i = 0; i < keys.length - 1; i++) {
-        if (!current[keys[i]]) {
-          current[keys[i]] = {};
+  async extractTextItemsWithPositions(pdfPath: string): Promise<any[]> {
+    const data = new Uint8Array(fs.readFileSync(pdfPath));
+    const loadingTask = (pdfjsLib as any).getDocument({ data });
+    const pdfDocument = await loadingTask.promise;
+    const items: any[] = [];
+    for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
+      const page = await pdfDocument.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      for (const item of textContent.items) {
+        // 일부 아이템은 str와 transform 프로퍼티가 없을 수 있으므로 확인
+        if (item.str && item.transform) {
+          items.push({
+            text: item.str,
+            x: item.transform[4],
+            y: item.transform[5],
+            page: pageNum,
+          });
         }
-        current = current[keys[i]];
       }
-      current[keys[keys.length - 1]] = value;
     }
+    return items;
+  },
 
-    // 각 글자 사이에 임의의 공백을 허용하는 마커를 생성하는 함수
-    function buildFlexibleMarker(marker: string): string {
-      return marker
-        .split('')
-        .map((ch) => ch.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'))
-        .join('\\s*');
-    }
+  /**
+   * 디버깅용: PDF.js로 추출한 raw 텍스트 아이템들을 콘솔에 출력합니다.
+   */
+  async debugPrintItems(pdfPath: string): Promise<void> {
+    const items = await pdfUtil.extractTextItemsWithPositions(pdfPath);
+    console.log('Extracted Items:', JSON.stringify(items, null, 2));
+  },
 
-    // 각 마커에 대해 순차적으로 값을 추출
-    markers.forEach((entry, index) => {
-      // 이후 마커들을 lookahead로 사용하여 해당 영역의 종료점을 결정합니다.
-      const nextMarkers = markers.slice(index + 1).map((e) => e.marker);
-      const flexibleMarker = buildFlexibleMarker(entry.marker);
-      const nextMarkersPattern =
-        nextMarkers.length > 0
-          ? nextMarkers.map((m) => buildFlexibleMarker(m)).join('|')
-          : '$';
-      // 패턴: 유연한 마커 + 선택적 콜론 및 공백, 이후 캡쳐 그룹(값) + lookahead (다음 마커 또는 문자열 끝)
-      const pattern =
-        flexibleMarker +
-        '\\s*[:：]?\\s*(.*?)\\s*(?=(' +
-        nextMarkersPattern +
-        ')|$)';
-      const regex = new RegExp(pattern, 'i');
-      const match = cleanedText.match(regex);
-      const value = match && match[1] ? match[1].trim() : '정보 없음';
-      assignValue(result, entry.key, value);
-    });
+  /**
+   * PDF의 표 영역(예: 임대인의 주소, 주민등록번호 등)을 좌표(Rect)로 미리 지정하고,
+   * 해당 영역 내의 텍스트를 추출하여 JSON 데이터로 반환합니다.
+   *
+   * ※ Rect 영역 값은 실제 PDF 좌표에 맞게 조정해야 합니다.
+   */
+  async extractDataUsingPDFjs(pdfPath: string): Promise<any> {
+    // 모든 텍스트 아이템 추출
+    const items = await pdfUtil.extractTextItemsWithPositions(pdfPath);
+    // 디버그: 좌표값 확인 (콘솔 로그로 출력)
+    console.log('Extracted Items:', JSON.stringify(items, null, 2));
+
+    // 예시로 임대인의 주소와 주민등록번호 영역을 사각형으로 지정 (실제 PDF 좌표에 맞게 수정 필요)
+    const leaseAddressRect: Rect = {
+      page: 1,
+      xMin: 50, // 왼쪽 여백 기준
+      xMax: 400, // 오른쪽 한계
+      yMin: 500, // 주소 시작 y 좌표
+      yMax: 550, // 주소 끝 y 좌표
+    };
+
+    const leaseRegRect: Rect = {
+      page: 1,
+      xMin: 50, // 주민등록번호 시작 x 좌표
+      xMax: 300, // 주민등록번호 끝 x 좌표
+      yMin: 450, // 주민등록번호 시작 y 좌표
+      yMax: 480, // 주민등록번호 끝 y 좌표
+    };
+
+    // 각 영역 내의 텍스트 추출
+    const addressText = getTextInRect(items, leaseAddressRect);
+    const regNumberText = getTextInRect(items, leaseRegRect);
+
+    // 결과 JSON – 필요에 따라 임차인, 계약 관련 영역도 추가
+    const result = {
+      임대인: {
+        주소: addressText || '정보 없음',
+        주민등록번호: regNumberText || '정보 없음',
+        전화: '정보 없음',
+        성명: '정보 없음',
+        대리인: {
+          주소: '정보 없음',
+          주민등록번호: '정보 없음',
+          성명: '정보 없음',
+        },
+      },
+      임차인: {
+        주소: '정보 없음',
+        주민등록번호: '정보 없음',
+        전화: '정보 없음',
+        성명: '정보 없음',
+        대리인: {
+          주소: '정보 없음',
+          주민등록번호: '정보 없음',
+          성명: '정보 없음',
+        },
+      },
+      '임대차계약 기간': '정보 없음',
+      '계약갱신거절 사유': '정보 없음',
+    };
 
     return result;
   },
 
   /**
-   * OCR을 사용하여 이미지 기반 PDF에서 텍스트를 추출하는 함수 (puppeteer 사용)
+   * pdf-parse를 사용하여 PDF 파일의 전체 텍스트를 추출합니다.
+   */
+  async parsePDF(filePath: string): Promise<string> {
+    try {
+      const pdfBuffer = await fs.promises.readFile(filePath);
+      const pdfData = await require('pdf-parse')(pdfBuffer);
+      return pdfUtil.cleanText(pdfData.text || '');
+    } catch (error) {
+      console.error(`Error parsing PDF: ${error.message}`);
+      throw new Error('Failed to parse the PDF file');
+    }
+  },
+
+  /**
+   * Tesseract와 Puppeteer를 사용하여 이미지 기반 PDF에서 텍스트를 추출합니다.
    */
   async extractTextUsingOCR(pdfPath: string): Promise<string> {
     let browser;
     let worker;
-
     try {
       const outputPath = path.join(__dirname, '../output');
       if (!fs.existsSync(outputPath)) {
         fs.mkdirSync(outputPath, { recursive: true });
       }
-
       browser = await puppeteer.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
-
       const page = await browser.newPage();
       const fileUrl = `file://${encodeURI(path.resolve(pdfPath))}`;
       await page.goto(fileUrl, { waitUntil: 'networkidle2' });
-
       const imagePath = path.join(outputPath, 'pdf_page.png');
       await page.screenshot({ path: imagePath, fullPage: true });
-
       await browser.close();
-
       worker = await Tesseract.createWorker();
       await worker.reinitialize('kor');
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-
       const {
         data: { text },
       } = await worker.recognize(imagePath);
@@ -196,20 +182,6 @@ export const pdfUtil = {
     } finally {
       if (browser) await browser.close();
       if (worker) await worker.terminate();
-    }
-  },
-
-  /**
-   * PDF에서 텍스트를 직접 추출하는 함수
-   */
-  async parsePDF(filePath: string): Promise<string> {
-    try {
-      const pdfBuffer = await fs.promises.readFile(filePath);
-      const pdfData = await pdfParse(pdfBuffer);
-      return pdfUtil.cleanText(pdfData.text || '');
-    } catch (error) {
-      console.error(`Error parsing PDF: ${error.message}`);
-      throw new Error('Failed to parse the PDF file');
     }
   },
 };
